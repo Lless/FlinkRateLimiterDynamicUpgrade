@@ -1,11 +1,8 @@
 package org.myorg.quickstart;
 
 import org.apache.flink.api.common.io.ratelimiting.GuavaFlinkConnectorRateLimiter;
-import org.apache.flink.api.common.state.MapStateDescriptor;
-import org.apache.flink.api.common.state.ValueStateDescriptor;
-import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
-import org.apache.flink.api.common.typeinfo.TypeHint;
-import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.api.common.state.BroadcastState;
+import org.apache.flink.api.common.state.ReadOnlyBroadcastState;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.functions.co.BroadcastProcessFunction;
 import org.apache.flink.util.Collector;
@@ -13,7 +10,7 @@ import org.apache.flink.util.Collector;
 public class NewRateFunc extends BroadcastProcessFunction<String, String, String> {
 
   private final long messagesPerSecond;
-  private long currentPercentage = 100;
+  private String currentPercentage = "100";
   protected GuavaFlinkConnectorRateLimiter messagesRateLimiter;
 
   public NewRateFunc(long messagesPerSecond) {
@@ -27,7 +24,7 @@ public class NewRateFunc extends BroadcastProcessFunction<String, String, String
   }
 
   private void configureRateLimiter() {
-    messagesRateLimiter.setRate(messagesPerSecond * currentPercentage / 100);
+    messagesRateLimiter.setRate(messagesPerSecond * Integer.parseInt(currentPercentage) / 100);
     messagesRateLimiter.open(getRuntimeContext());
   }
 
@@ -36,13 +33,18 @@ public class NewRateFunc extends BroadcastProcessFunction<String, String, String
       String s, ReadOnlyContext readOnlyContext, Collector<String> collector
   ) throws Exception {
     try {
-      long value = Long.parseLong(s);
-     /* System.out.println(getRuntimeContext().getMapState(new MapStateDescriptor<>(
-          "RulesBroadcastState",
-          BasicTypeInfo.STRING_TYPE_INFO,
-          TypeInformation.of(new TypeHint<String>() {}))));*/
-      messagesRateLimiter.acquire(s.length()*100);
-      collector.collect(String.valueOf(value));
+
+      final ReadOnlyBroadcastState<String, String> broadcastState =
+          readOnlyContext.getBroadcastState(StreamingJob.DESCRIPTOR);
+      if (broadcastState.contains("percentage") && !broadcastState.get("percentage").equals(currentPercentage)) {
+        currentPercentage = broadcastState.get("percentage");
+        configureRateLimiter();
+      }
+
+      messagesRateLimiter.acquire(s.length() * 100);
+      System.out.print(currentPercentage);
+      collector.collect(s);
+
     } catch (Exception e) {
       System.out.println(e);
     }
@@ -53,10 +55,9 @@ public class NewRateFunc extends BroadcastProcessFunction<String, String, String
       String s, Context context, Collector<String> collector
   ) throws Exception {
     try {
-      System.out.println("additional: "+ s);
-      currentPercentage = Long.parseLong(s);
-      configureRateLimiter();
-      //Thread.currentThread().interrupt();
+      //System.out.println("additional: " + s);
+      final BroadcastState<String, String> broadcastState = context.getBroadcastState(StreamingJob.DESCRIPTOR);
+      broadcastState.put("percentage", s);
     } catch (Exception e) {
       System.out.println(e);
     }

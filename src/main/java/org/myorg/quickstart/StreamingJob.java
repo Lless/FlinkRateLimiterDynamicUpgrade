@@ -18,49 +18,37 @@
 
 package org.myorg.quickstart;
 
+import org.apache.flink.api.common.functions.FlatMapFunction;
 import org.apache.flink.api.common.serialization.SimpleStringSchema;
 import org.apache.flink.api.common.state.MapStateDescriptor;
 import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
 import org.apache.flink.api.common.typeinfo.TypeHint;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.streaming.api.datastream.BroadcastStream;
-import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.DataStreamSource;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.connectors.kafka.FlinkKafkaConsumer;
 
 import java.util.Properties;
 
-/**
- * Skeleton for a Flink Streaming Job.
- *
- * <p>For a tutorial how to write a Flink streaming application, check the
- * tutorials and examples on the <a href="https://flink.apache.org/docs/stable/">Flink Website</a>.
- *
- * <p>To package your application into a JAR file for execution, run
- * 'mvn clean package' on the command line.
- *
- * <p>If you change the name of the main class (with the public static void main(String[] args))
- * method, change the respective entry in the POM.xml file (simply search for 'mainClass').
- */
 public class StreamingJob {
+	public static final MapStateDescriptor<String, String> DESCRIPTOR = new MapStateDescriptor<>(
+			"RulesBroadcastState",
+			BasicTypeInfo.STRING_TYPE_INFO,
+			TypeInformation.of(new TypeHint<String>() {
+			})
+	);
 
 	public static void main(String[] args) throws Exception {
-		// set up the streaming execution environment
 		final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 		env.setParallelism(1);
 		Properties properties = new Properties();
 		properties.setProperty("bootstrap.servers", "localhost:9092");
 
-		MapStateDescriptor<String, String> percentageStateDescriptor = new MapStateDescriptor<>(
-				"RulesBroadcastState",
-				BasicTypeInfo.STRING_TYPE_INFO,
-				TypeInformation.of(new TypeHint<String>() {}));
-
-		DataStream<String> additionalStream = env
-				.addSource(new FlinkKafkaConsumer<>("additional", new SimpleStringSchema(), properties));
-
-		BroadcastStream<String> broadcastStream = additionalStream.broadcast(percentageStateDescriptor);
+		BroadcastStream<NodeConfigurationSchema> broadcastStream = env
+				.addSource(new FlinkKafkaConsumer<>("additional", new KafkaStreamDeserealizationSchema(), properties))
+				.flatMap(new BroadcastStreamFilter())
+				.broadcast(DESCRIPTOR);
 
 		final DataStreamSource<String> main = env
 				.addSource(new FlinkKafkaConsumer<>("main", new SimpleStringSchema(), properties));
@@ -68,6 +56,7 @@ public class StreamingJob {
 		main
 				.connect(broadcastStream)
 				.process(new NewRateFunc(10))
+				//.connect(broadcastStream)
 				//.process(new ChangeMultiplierFunc(10))
 				.print();
 
